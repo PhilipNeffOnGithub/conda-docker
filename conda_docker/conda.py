@@ -743,4 +743,3 @@ def build_docker_environment_image(
         )
 
         return base_image
- 
