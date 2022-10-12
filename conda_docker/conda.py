@@ -118,9 +118,6 @@ def get_dist_name(fn):
 
 
 def _precs_from_environment(environment, list_flag, download_dir, user_conda):
-    LOGGER.info(f"[CONDA_DOCKER] environment: {environment}")
-    LOGGER.info(f"[CONDA_DOCKER] download_dir: {download_dir}")
-
     explicit = subprocess.check_output(
         [user_conda, "list", list_flag, environment, "--explicit", "--json", "--md5"],
         encoding="utf-8",
@@ -165,8 +162,6 @@ def precs_from_environment_prefix(environment, download_dir, user_conda):
     return _precs_from_environment(environment, "--prefix", download_dir, user_conda)
 
 def pip_precs_from_environment_prefix(environment):
-    LOGGER.info(f"[CONDA_DOCKER] GETTING PIP PRECS FOR ENV: {environment}")
-
     requirements = subprocess.check_output(
         [f"{environment}/bin/python", "-m", "pip", "freeze"],
         encoding="utf-8",
@@ -219,8 +214,9 @@ def precs_from_package_specs(
     """
     # perform solve
     solver_conda = find_solver_conda(solver, user_conda)
+    LOGGER.info("solving conda environment")
     with timer(
-        LOGGER, "[CONDA_DOCKER] - solving conda environment"
+        LOGGER, "solving conda environment"
     ), tempfile.TemporaryDirectory() as tmpdir:
         # need temp env prefix, just in case.
         json_listing = subprocess.check_output(
@@ -238,7 +234,8 @@ def precs_from_package_specs(
     listing = listing["actions"]["LINK"]
 
     # get repodata so that we have the MD5 sums
-    with timer(LOGGER, "[CONDA_DOCKER] - loading repodata"):
+    LOGGER.info("loading repodata")
+    with timer(LOGGER, "loading repodata"):
         used_channels = {f"{x['base_url']}/{x['platform']}" for x in listing}
         repodatas = load_repodatas(
             download_dir,
@@ -258,7 +255,6 @@ def precs_from_package_specs(
         md5 = pkg_repodata["md5"]
         package_tarball_full_path = os.path.join(download_dir, fn)
         extracted_package_dir = os.path.join(download_dir, dist_name)
-        LOGGER.info(f"[CONDA_DOCKER] - extracted pkg directory : {extracted_package_dir}")
         precs.append(
             PackageCacheRecord(
                 url=url,
@@ -269,7 +265,6 @@ def precs_from_package_specs(
                 **package,
             )
         )
-    LOGGER.info("[CONDA_DOCKER] - precs: ", precs)
     return precs
 
 
@@ -340,9 +335,9 @@ def fetch_precs(download_dir, precs):
             os.path.isfile(package_tarball_full_path)
             and md5_files([package_tarball_full_path]) == prec.md5
         ):
-            LOGGER.debug(f"[CONDA_DOCKER] - already have: {prec.fn}")
+            LOGGER.debug(f"already have: {prec.fn}")
         else:
-            LOGGER.debug(f"[CONDA_DOCKER] - fetching: {prec.fn}")
+            LOGGER.debug(f"fetching: {prec.fn}")
             download(prec.url, os.path.join(download_dir, prec.fn))
 
         if not os.path.isdir(extracted_package_dir):
@@ -451,10 +446,6 @@ def chroot_install(
     #          This is normally a temp directory, and prefixed by new_root
     #   targ - This is the path INSIDE of the chroot, ie host minus the new_root
     # first, link conda standalone into chroot dir
-    LOGGER.info(f"[CONDA_DOCKER] orig_prefix: {orig_prefix} ")
-    LOGGER.info(f"[CONDA_DOCKER] download_dir: {download_dir} ")
-    LOGGER.info(f"[CONDA_DOCKER] new_root: {new_root} ")
-
     host_conda_opt = os.path.join(new_root, "opt", "conda")
     host_pkgs_dir = os.path.join(host_conda_opt, "pkgs")
     orig_standalone = os.path.join(orig_prefix, "standalone_conda", "conda.exe")
@@ -478,7 +469,6 @@ def chroot_install(
         copy_func(record.package_tarball_full_path, host_record_fn)
         host_record_fns.append(host_record_fn)
         targ_record_fns.append(os.path.join(targ_pkgs_dir, record.fn))
-
 
     # write an environment file to install from
     s = "@EXPLICIT\nfile://" + "\nfile://".join(targ_record_fns) + "\n"
@@ -562,7 +552,8 @@ def chroot_install(
 
 
 def add_single_conda_layer(image, hostpath, arcpath=None, filter=None):
-    with timer(LOGGER, "[CONDA_DOCKER] - adding single conda environment layer"):
+    LOGGER.info("adding single conda environment layer")
+    with timer(LOGGER, "adding single conda environment layer"):
         image.add_layer_path(hostpath, arcpath=arcpath, filter=filter)
 
 
@@ -589,11 +580,11 @@ def _paths_from_record(record, hostpath, meta, dist_name):
 
 
 def add_conda_package_layers(image, hostpath, arcpath=None, filter=None, records=None):
-    with timer(LOGGER, "[CONDA_DOCKER] - adding conda environment in package layers"):
+    LOGGER.info("adding conda environment in package layers")
+    with timer(LOGGER, "adding conda environment in package layers"):
         counter = 0
         files_in_layers = set()
         for record in records:
-
             if counter > 100:
                 break
             # read metadata for the package
@@ -640,7 +631,7 @@ def add_conda_layers(
     else:
         raise ValueError(f"layering strategy not recognized: {layering_strategy}")
 
-    LOGGER.info(f"[CONDA_DOCKER] - docker image {image.name}:{image.tag} has {len(image.layers)} layers")
+    LOGGER.info(f"docker image {image.name}:{image.tag} has {len(image.layers)} layers")
 
 
 def parse_image_name(name):
@@ -655,12 +646,14 @@ def pull_container_image(base_image: str):
     if base_image == "scratch":
         image = Image(name=base_image_name, tag=base_image_tag)
     else:
-        LOGGER.info(f"[CONDA_DOCKER] - pulling base image {base_image_name}:{base_image_tag}")
+        LOGGER.info(f"pulling base image {base_image_name}:{base_image_tag}")
         with timer(LOGGER, "pulling base image"):
             registry = Registry(
                 hostname=os.environ.get(
                     "CONDA_DOCKER_REGISTRY_URL", "https://registry-1.docker.io"
                 ),
+                username=os.environ.get("CONDA_DOCKER_REGISTRY_USERNAME"),
+                password=os.environ.get("CONDA_DOCKER_REGISTRY_PASSWORD"),
             )
             image = registry.pull_image(base_image_name, base_image_tag)
     return image
@@ -688,7 +681,8 @@ def build_docker_environment(
         layering_strategy,
     )
 
-    with timer(LOGGER, "[CONDA_DOCKER] - writing docker file"):
+    LOGGER.info("writing docker file to filesystem")
+    with timer(LOGGER, "writing docker file"):
         image.write_filename(output_filename)
 
 def copy_pip_packages(target_dir, pip_files):
@@ -717,9 +711,7 @@ def build_docker_environment_image(
     base_image.tag = output_image_tag
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        LOGGER.info("[CONDA_DOCKER] - building conda environment")
-        LOGGER.info(f"[CONDA_DOCKER] - base_image.name: { base_image.name}")
-        LOGGER.info(f"[CONDA_DOCKER] - records: {records} ")
+        LOGGER.info("building conda environment")
         pip_targ_dir = ""
 
         with timer(LOGGER, "building conda environment"):
