@@ -192,12 +192,12 @@ def pip_precs_from_environment_prefix(environment):
         file_list = False
         pip_package_lines = pip_package.splitlines()
         for line in pip_package_lines:
-            if line[:10] == "Location: ":
-                path = line[10:]
-            elif line[:6] == "Files:":
+            if line.startswith("Location:"):
+                path = line[line.index(" ")+1:]
+            elif line.startswith("Files:"):
                 file_list = True
-            elif file_list and line[-4:] != '.pyc':
-                pip_files.append(os.path.join(path, line[2:]))
+            elif file_list and not line.endswith(".pyc"):
+                pip_files.append(os.path.join(path, line.strip()))
     return pip_files
 
 def precs_from_package_specs(
