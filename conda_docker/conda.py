@@ -686,7 +686,7 @@ def build_docker_environment(
         image.write_filename(output_filename)
 
 def copy_pip_packages(target_dir, pip_files):
-    pip_targ_dir = os.path.join(target_dir, "opt/", "conda")
+    pip_targ_dir = os.path.join(target_dir, "opt/", "conda/")
     for pip_file in pip_files:
         pip_file_path_ending = pip_file[pip_file.index('lib'):pip_file.rindex('/')]
         specific_pip_path_target = pip_targ_dir + pip_file_path_ending
