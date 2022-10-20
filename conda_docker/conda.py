@@ -162,43 +162,43 @@ def precs_from_environment_prefix(environment, download_dir, user_conda):
     return _precs_from_environment(environment, "--prefix", download_dir, user_conda)
 
 def pip_precs_from_environment_prefix(environment):
-    requirements = subprocess.check_output(
+    pip_freeze_output = subprocess.check_output(
         [f"{environment}/bin/python", "-m", "pip", "freeze"],
         encoding="utf-8",
         universal_newlines=True,
     )
-    packages = []
-    pip_package_metadata = []
-    for line in requirements.splitlines():
 
-        if len(line.split()) == 1:
-            LOGGER.info(f"[CONDA_DOCKER] PIP INSTALLED PACKAGE: {line}")
-            packages.append(line)
-
-            line=line[:line.index('==')]
-            pip_package_metadata.append(subprocess.check_output(
-                [f"{environment}/bin/python", "-m", "pip", "show", "-f", f"{line}"],
+    pip_package_metadatas = []
+    for line in pip_freeze_output.splitlines():
+        line_parts = line.split("==")
+        if len(line_parts) == 2:
+            package_name = line_parts[0]
+            pip_package_metadatas.append(subprocess.check_output(
+                [f"{environment}/bin/python", "-m", "pip", "show", "-f", package_name],
                 encoding="utf-8",
                 universal_newlines=True,
             ))
 
-
-    """ Convert pip package metadata to an array
-    of paths to all necessary pip package files.
     """
-    path = ""
-    pip_files = []
-    for pip_package in pip_package_metadata:
-        file_list = False
-        pip_package_lines = pip_package.splitlines()
-        for line in pip_package_lines:
-            if line.startswith("Location:"):
-                path = line[line.index(" ")+1:]
-            elif line.startswith("Files:"):
-                file_list = True
-            elif file_list and not line.endswith(".pyc"):
-                pip_files.append(os.path.join(path, line.strip()))
-    return pip_files
+    The output of `pip show -f package` looks something like:
+    
+    Name: foopackage
+    Location: /opt/conda/envs/some_env/site-packages
+    Files:
+      foopackage/__init__.py 
+      foopackage/foo.py
+    
+    We'll use this information to build a list of files to copy into the image.
+    """
+    pip_file_paths = []
+    for metadata in pip_package_metadatas:
+        pip_file_names = metadata.split("Files:\n")[-1].split()
+        pip_path_prefix = metadata.split("Location: ")[1].split()[0]
+
+        pip_file_names_no_cache = filter(lambda name: not name.endswith(".pyc"), pip_file_names)
+        pip_file_paths += list(map(lambda path: os.path.join(pip_path_prefix, path), pip_file_names_no_cache))
+
+    return pip_file_paths
 
 def precs_from_package_specs(
     package_specs,
@@ -685,15 +685,15 @@ def build_docker_environment(
     with timer(LOGGER, "writing docker file"):
         image.write_filename(output_filename)
 
-def copy_pip_packages(target_dir, pip_files):
-    pip_targ_dir = os.path.join(target_dir, "opt/", "conda/")
+def copy_pip_packages(pip_targ_dir, pip_files):
     for pip_file in pip_files:
-        pip_file_path_ending = pip_file[pip_file.index('lib'):pip_file.rindex('/')]
-        specific_pip_path_target = pip_targ_dir + pip_file_path_ending
-        if not os.path.isdir(specific_pip_path_target):
-            os.makedirs(specific_pip_path_target)
-        shutil.copy(pip_file, specific_pip_path_target)
-    return pip_targ_dir
+        ''' Preserve original pip file paths from download dir to target dir
+        by concatenating the start of download dir and the end of target dir
+        '''
+        pip_path_target = pip_targ_dir + pip_file[pip_file.index('lib'):pip_file.rindex('/')]
+        if not os.path.isdir(pip_path_target):
+            os.makedirs(pip_path_target)
+        shutil.copy(pip_file, pip_path_target)
 
 def build_docker_environment_image(
     base_image: Image,
@@ -712,7 +712,6 @@ def build_docker_environment_image(
 
     with tempfile.TemporaryDirectory() as tmpdir:
         LOGGER.info("building conda environment")
-        pip_targ_dir = ""
 
         with timer(LOGGER, "building conda environment"):
             chroot_install(
@@ -724,11 +723,16 @@ def build_docker_environment_image(
                 channels_remap,
             )
 
+            pip_targ_dir = os.path.join(str(tmpdir), "opt", "conda/")
+            #download_dir_prefix = download_dir.rindex("/")                  # option 2 - is this any better than hardcoding like in the line above?
+            #pip_targ_dir = os.path.join(str(tmpdir), download_dir_prefix)
+
             # install pip packages
-            pip_targ_dir = copy_pip_packages(
-                str(tmpdir),
+            copy_pip_packages(
+                pip_targ_dir,
                 pip_files,
             )
+        
         add_conda_layers(
             base_image,
             str(tmpdir),
