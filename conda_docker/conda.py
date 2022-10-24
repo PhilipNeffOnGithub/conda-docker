@@ -193,9 +193,7 @@ def pip_precs_from_environment_prefix(environment):
     for metadata in pip_package_metadatas:
         pip_file_names = metadata.split("Files:\n")[-1].split()
         pip_path_prefix = metadata.split("Location: ")[1].split()[0]
-        print("pip_path_prefix: ", pip_path_prefix)
         pip_path_after_env = pip_path_prefix.split(environment)[1]
-        print("pip_path_after_env: ", pip_path_after_env)
 
         pip_file_names_no_cache = filter(lambda name: not name.endswith(".pyc"), pip_file_names)
         pip_file_paths += list(map(lambda path: os.path.join(pip_path_after_env, path), pip_file_names_no_cache))
